@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Event Tagger</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0a; color: #f0f0f0; font-family: -apple-system, system-ui, sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; }
+
+  .header { padding: 10px 14px; background: #141414; border-bottom: 1px solid #2a2a2a; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .header h1 { margin: 0; font-size: 14px; font-weight: 600; color: #888; letter-spacing: 0.5px; }
+  .clock { font-family: ui-monospace, Menlo, monospace; font-size: 22px; font-weight: 600; color: #4ade80; }
+  .clock.idle { color: #444; }
+
+  .controls { padding: 10px 14px; background: #141414; border-bottom: 1px solid #2a2a2a; display: flex; gap: 8px; }
+  .controls button { flex: 1; padding: 10px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; background: #2a2a2a; color: #f0f0f0; }
+  .controls button.primary { background: #16a34a; }
+  .controls button.danger { background: #7f1d1d; color: #fecaca; }
+  .controls button:disabled { opacity: 0.3; }
+
+  .slate-overlay { position: fixed; inset: 0; background: #16a34a; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; font-size: 200px; font-weight: 900; color: white; }
+  .slate-overlay .label { font-size: 32px; letter-spacing: 4px; margin-bottom: 20px; }
+
+  .main { flex: 1; overflow-y: auto; padding: 12px; }
+
+  .row-label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin: 14px 4px 6px; }
+  .row-label:first-child { margin-top: 4px; }
+
+  .btn-row { display: grid; gap: 6px; }
+  .btn-row.cols-1 { grid-template-columns: 1fr; }
+  .btn-row.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .btn-row.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .btn-row.cols-6 { grid-template-columns: repeat(6, 1fr); }
+
+  .tag-btn { padding: 18px 6px; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; color: white; transition: transform 0.05s; touch-action: manipulation; }
+  .tag-btn:active { transform: scale(0.95); }
+  .tag-btn:disabled { opacity: 0.25; }
+
+  .btn-row.cols-2 .tag-btn { padding: 32px 6px; font-size: 18px; }
+
+  .mark-big { background: #0ea5e9; padding: 48px 6px !important; font-size: 28px !important; font-weight: 900; letter-spacing: 3px; }
+
+  .barrel { background: #16a34a; }
+  .solid { background: #65a30d; }
+  .mishit { background: #ca8a04; }
+  .foul { background: #9333ea; }
+  .whiff { background: #dc2626; }
+  .take { background: #475569; }
+
+  .fb { background: #2563eb; }
+  .bb { background: #0891b2; }
+  .os { background: #7c3aed; }
+
+  .note-btn { background: #374151; padding: 12px; font-size: 13px; }
+
+  .log { margin-top: 16px; background: #141414; border-radius: 10px; padding: 10px; max-height: 280px; overflow-y: auto; }
+  .log-entry { font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 6px 4px; border-bottom: 1px solid #2a2a2a; display: flex; justify-content: space-between; gap: 8px; }
+  .log-entry:last-child { border-bottom: none; }
+  .log-time { color: #4ade80; flex-shrink: 0; }
+  .log-event { color: #f0f0f0; flex: 1; text-align: right; }
+  .log-empty { color: #444; text-align: center; padding: 20px; font-size: 13px; }
+  .log-delete { color: #7f1d1d; background: none; border: none; padding: 0 4px; font-size: 16px; font-weight: bold; }
+
+  .note-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+  .note-modal.active { display: flex; }
+  .note-modal-content { background: #1a1a1a; border-radius: 12px; padding: 20px; width: 100%; max-width: 400px; }
+  .note-modal h3 { margin: 0 0 12px; font-size: 16px; }
+  .note-modal input { width: 100%; padding: 12px; font-size: 16px; background: #0a0a0a; border: 1px solid #2a2a2a; color: #f0f0f0; border-radius: 8px; margin-bottom: 12px; }
+  .note-modal .modal-buttons { display: flex; gap: 8px; }
+  .note-modal button { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; }
+  .note-modal .save { background: #16a34a; color: white; }
+  .note-modal .cancel { background: #2a2a2a; color: #f0f0f0; }
+
+  .session-info { font-size: 11px; color: #666; padding: 0 4px; margin-top: 8px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>EVENT TAGGER</h1>
+  <div class="clock idle" id="clock">--:--:--</div>
+</div>
+
+<div class="controls">
+  <button id="startBtn" class="primary">Start Session</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <button id="exportBtn" disabled>Export CSV</button>
+</div>
+
+<div class="main">
+  <div class="row-label">Generic event</div>
+  <div class="btn-row cols-1">
+    <button class="tag-btn mark-big" id="markBtn" disabled>+ MARK</button>
+  </div>
+
+  <div class="row-label">Batting outcome</div>
+  <div class="btn-row cols-2">
+    <button class="tag-btn barrel" data-type="outcome" data-subtype="Barrel" disabled>Barrel</button>
+    <button class="tag-btn solid" data-type="outcome" data-subtype="Hit" disabled>Hit</button>
+    <button class="tag-btn whiff" data-type="outcome" data-subtype="Whiff" disabled>Whiff</button>
+    <button class="tag-btn take" data-type="outcome" data-subtype="Take" disabled>Take</button>
+  </div>
+
+  <div class="row-label">Other</div>
+  <div class="btn-row cols-1">
+    <button class="tag-btn note-btn" id="noteBtn" disabled>+ Note</button>
+  </div>
+
+  <div class="log" id="log">
+    <div class="log-empty">No events yet. Tap Start Session to begin.</div>
+  </div>
+
+  <div class="session-info" id="sessionInfo"></div>
+</div>
+
+<div class="slate-overlay" id="slate" style="display: none;">
+  <div class="label">SLATE</div>
+  <div id="slateCount">3</div>
+</div>
+
+<div class="note-modal" id="noteModal">
+  <div class="note-modal-content">
+    <h3>Add note</h3>
+    <input type="text" id="noteInput" placeholder="Quick note..." autocomplete="off">
+    <div class="modal-buttons">
+      <button class="cancel" id="noteCancel">Cancel</button>
+      <button class="save" id="noteSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  let session = null;
+  let clockInterval = null;
+
+  const $ = (id) => document.getElementById(id);
+  const clock = $('clock');
+  const startBtn = $('startBtn');
+  const stopBtn = $('stopBtn');
+  const exportBtn = $('exportBtn');
+  const noteBtn = $('noteBtn');
+  const markBtn = $('markBtn');
+  const slate = $('slate');
+  const slateCount = $('slateCount');
+  const noteModal = $('noteModal');
+  const noteInput = $('noteInput');
+  const noteSave = $('noteSave');
+  const noteCancel = $('noteCancel');
+  const log = $('log');
+  const sessionInfo = $('sessionInfo');
+  const tagBtns = document.querySelectorAll('.tag-btn');
+
+  function loadSession() {
+    try {
+      const stored = localStorage.getItem('tagger_session');
+      if (stored) {
+        session = JSON.parse(stored);
+        if (session && session.active) {
+          resumeSession();
+        } else if (session && session.events.length > 0) {
+          // Completed session waiting to be exported
+          updateUI();
+          renderLog();
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load session', e);
+    }
+  }
+
+  function saveSession() {
+    try {
+      localStorage.setItem('tagger_session', JSON.stringify(session));
+    } catch (e) {
+      console.error('Failed to save session', e);
+    }
+  }
+
+  function pad2(n) { return n < 10 ? '0' + n : String(n); }
+  function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : String(n); }
+
+  function formatOffset(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+  }
+
+  function formatOffsetPrecise(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const millis = ms % 1000;
+    return pad2(h) + ':' + pad2(m) + ':' + pad2(s) + '.' + pad3(millis);
+  }
+
+  function updateClock() {
+    if (!session || !session.active) {
+      clock.textContent = '--:--:--';
+      clock.classList.add('idle');
+      return;
+    }
+    const elapsed = Date.now() - session.startMs;
+    clock.textContent = formatOffset(elapsed);
+    clock.classList.remove('idle');
+  }
+
+  function updateUI() {
+    const active = session && session.active;
+    const hasEvents = session && session.events && session.events.length > 0;
+
+    startBtn.disabled = active;
+    stopBtn.disabled = !active;
+    exportBtn.disabled = !hasEvents;
+    noteBtn.disabled = !active;
+    markBtn.disabled = !active;
+    tagBtns.forEach(b => { if (b.dataset.type) b.disabled = !active; });
+
+    if (session) {
+      const count = session.events.length;
+      sessionInfo.textContent = `Session: ${session.id} · ${count} event${count === 1 ? '' : 's'}`;
+    } else {
+      sessionInfo.textContent = '';
+    }
+  }
+
+  function renderLog() {
+    if (!session || session.events.length === 0) {
+      log.innerHTML = '<div class="log-empty">No events yet.</div>';
+      return;
+    }
+    log.innerHTML = '';
+    // Show newest first
+    const sorted = [...session.events].slice().reverse();
+    sorted.forEach((ev, displayIdx) => {
+      const realIdx = session.events.length - 1 - displayIdx;
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      const label = ev.subtype ? `${ev.type}: ${ev.subtype}` : ev.type;
+      const noteText = ev.note ? ` — ${ev.note}` : '';
+      entry.innerHTML = `
+        <span class="log-time">${formatOffset(ev.offsetMs)}</span>
+        <span class="log-event">${label}${noteText}</span>
+        <button class="log-delete" data-idx="${realIdx}">×</button>
+      `;
+      log.appendChild(entry);
+    });
+    log.querySelectorAll('.log-delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx);
+        if (confirm('Delete this event?')) {
+          session.events.splice(idx, 1);
+          saveSession();
+          updateUI();
+          renderLog();
+        }
+      });
+    });
+  }
+
+  function logEvent(type, subtype, note) {
+    if (!session || !session.active) return;
+    const now = Date.now();
+    const ev = {
+      offsetMs: now - session.startMs,
+      iso: new Date(now).toISOString(),
+      type: type,
+      subtype: subtype || '',
+      note: note || ''
+    };
+    session.events.push(ev);
+    saveSession();
+    updateUI();
+    renderLog();
+  }
+
+  function startSession() {
+    const now = Date.now();
+    const id = new Date(now).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    session = {
+      id: id,
+      startMs: now,
+      startIso: new Date(now).toISOString(),
+      active: true,
+      events: []
+    };
+    saveSession();
+    runSlate();
+    if (clockInterval) clearInterval(clockInterval);
+    clockInterval = setInterval(updateClock, 100);
+    updateUI();
+    renderLog();
+  }
+
+  function resumeSession() {
+    if (clockInterval) clearInterval(clockInterval);
+    clockInterval = setInterval(updateClock, 100);
+    updateUI();
+    renderLog();
+  }
+
+  function runSlate() {
+    let count = 3;
+    slateCount.textContent = count;
+    slate.style.display = 'flex';
+    const interval = setInterval(() => {
+      count--;
+      if (count <= 0) {
+        clearInterval(interval);
+        slate.style.display = 'none';
+        logEvent('slate', 'sync', 'Visual slate at session start');
+      } else {
+        slateCount.textContent = count;
+      }
+    }, 1000);
+  }
+
+  function stopSession() {
+    if (!session) return;
+    if (!confirm('Stop session? You can still export after stopping.')) return;
+    session.active = false;
+    session.endMs = Date.now();
+    session.endIso = new Date(session.endMs).toISOString();
+    saveSession();
+    if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+    updateClock();
+    updateUI();
+  }
+
+  function exportCSV() {
+    if (!session || session.events.length === 0) return;
+    const headers = ['session_id', 'session_start_iso', 'event_offset_ms', 'event_offset_hms', 'event_iso', 'event_type', 'event_subtype', 'note'];
+    const rows = [headers.join(',')];
+    session.events.forEach(ev => {
+      const row = [
+        session.id,
+        session.startIso,
+        ev.offsetMs,
+        formatOffsetPrecise(ev.offsetMs),
+        ev.iso,
+        ev.type,
+        ev.subtype,
+        '"' + (ev.note || '').replace(/"/g, '""') + '"'
+      ];
+      rows.push(row.join(','));
+    });
+    const csv = rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const filename = `tags_${session.id}.csv`;
+
+    // iOS Safari doesn't fully support download attribute on anchor; try Share API first
+    if (navigator.share && navigator.canShare) {
+      const file = new File([blob], filename, { type: 'text/csv' });
+      if (navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: filename })
+          .catch(() => fallbackDownload(url, filename));
+        return;
+      }
+    }
+    fallbackDownload(url, filename);
+  }
+
+  function fallbackDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function showNoteModal() {
+    noteInput.value = '';
+    noteModal.classList.add('active');
+    setTimeout(() => noteInput.focus(), 50);
+  }
+
+  function hideNoteModal() {
+    noteModal.classList.remove('active');
+    noteInput.blur();
+  }
+
+  // Event listeners
+  startBtn.addEventListener('click', () => {
+    if (session && session.events.length > 0) {
+      if (!confirm('Start a new session? Current session data will be cleared (export first if you need it).')) return;
+    }
+    startSession();
+  });
+  stopBtn.addEventListener('click', stopSession);
+  exportBtn.addEventListener('click', exportCSV);
+
+  tagBtns.forEach(btn => {
+    if (btn.dataset.type) {
+      btn.addEventListener('click', () => {
+        logEvent(btn.dataset.type, btn.dataset.subtype);
+      });
+    }
+  });
+
+  noteBtn.addEventListener('click', showNoteModal);
+  markBtn.addEventListener('click', () => logEvent('mark', '', ''));
+
+  noteSave.addEventListener('click', () => {
+    const text = noteInput.value.trim();
+    if (text) logEvent('note', '', text);
+    hideNoteModal();
+  });
+  noteCancel.addEventListener('click', hideNoteModal);
+  noteInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      noteSave.click();
+    }
+  });
+
+  // Prevent accidental zoom on double-tap
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  }, false);
+
+  loadSession();
+  updateClock();
+})();
+</script>
+
+</body>
+</html>
